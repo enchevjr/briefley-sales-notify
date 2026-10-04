@@ -3,6 +3,7 @@
 Сравнява абонаментите от Briefley Analytics API със снимката от предната проверка (state.json).
 Първото пускане само прави снимката и не праща нищо. Ключовете идват от env (GitHub) или от config.env.
   --dry-run   показва съобщенията, без да праща и без да записва снимката
+  --loop N    повтаря проверката всяка минута N минути
 """
 import datetime as dt, json, os, sys, time
 from zoneinfo import ZoneInfo
@@ -135,4 +136,11 @@ def main():
     print(f"Проверени {len(rows)} променени абонамента.")
 
 if __name__ == "__main__":
-    main()
+    # --loop N: проверява всяка минута в продължение на N минути (GitHub пуска графика неравномерно)
+    mins = int(sys.argv[sys.argv.index("--loop") + 1]) if "--loop" in sys.argv else 0
+    end = time.time() + mins * 60
+    while True:
+        try: main()
+        except Exception as e: print("грешка:", e)
+        if time.time() + 60 > end: break
+        time.sleep(60)

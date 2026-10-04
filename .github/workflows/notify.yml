@@ -1,7 +1,7 @@
 name: sales-notify
 on:
   schedule:
-    - cron: "*/5 * * * *"
+    - cron: "*/20 * * * *"
   workflow_dispatch:
 concurrency:
   group: notify
@@ -11,7 +11,7 @@ permissions:
 jobs:
   run:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 125
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -23,7 +23,7 @@ jobs:
           path: state.json
           key: notify-state-${{ github.run_id }}
           restore-keys: notify-state-
-      - run: python notify.py
+      - run: python notify.py --loop 115
         env:
           BRIEFLEY_ANALYTICS_KEY: ${{ secrets.BRIEFLEY_ANALYTICS_KEY }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
@@ -37,7 +37,7 @@ jobs:
       # GitHub спира графика на публични хранилища след 60 дни без промени; веднъж месечно празен commit
       - name: keepalive
         run: |
-          if [ "$(date -u +%d%H)" = "0100" ] && [ "$(date -u +%M)" -lt 5 ]; then
+          if [ "$(date -u +%d%H)" = "0100" ]; then
             git config user.name "notify-bot"; git config user.email "notify-bot@users.noreply.github.com"
             git commit --allow-empty -m "keepalive" && git push
           fi
