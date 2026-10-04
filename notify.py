@@ -72,6 +72,34 @@ def events(s, old, now):
         return "conv", f"🟢 Триалът стана платен {plat(s)} · {label(s)}{money(s)}"
     return None
 
+def src_text(src):
+    """Откъде е дошъл човекът (users.source от бекенда), когато е известно."""
+    if not src: return ""
+    t = src.get("type")
+    if t == "meta":
+        ad, camp = src.get("ad_name"), src.get("campaign_name")
+        if ad or camp: return f"\n📣 Реклама: {ad or '—'}" + (f"\n   кампания: {camp}" if camp else "")
+        return "\n📣 От реклама в Meta"
+    if t in ("email", "utm"): return f"\n✉️ От имейл: {src.get('src') or src.get('utm_campaign') or src.get('utm_source') or ''}".rstrip(": ")
+    if t == "promo_code": return f"\n🎟️ Промо код: {src.get('code', '')}"
+    if t == "survey": return f"\n🗣️ Сам каза: {src.get('answer', '')}"
+    if t == "organic": return "\n🌱 Органично (без реклама)"
+    return f"\n📍 Източник: {t}"
+
+def sources(since):
+    """user_id → source за наскоро променените потребители."""
+    out, cur = {}, None
+    try:
+        while True:
+            q = {"updated_since": since, "limit": 1000}
+            if cur: q["cursor"] = cur
+            j = get("users", **q)
+            for u in j["data"]: out[str(u["user_id"])] = u.get("source")
+            cur = j.get("next_cursor")
+            if not cur: return out
+    except Exception as e:
+        print("source:", e); return out
+
 def send(text):
     if DRY: print("—", text); return
     r = requests.post(f"https://api.telegram.org/bot{E['TELEGRAM_BOT_TOKEN']}/sendMessage",
@@ -90,11 +118,15 @@ def main():
     now = ts(server) or dt.datetime.now(dt.timezone.utc)
     today = now.astimezone(SOFIA).date().isoformat()
     if st.get("day") != today: st["day"], st["count"] = today, {}
+    src = None
     for s in sorted(rows, key=lambda s: s["updated_at"] or ""):
         ev = events(s, st["subs"].get(s["subscription_id"]), now)
+        if ev and src is None:
+            src = sources((now - dt.timedelta(days=3)).strftime("%Y-%m-%dT%H:%M:%SZ"))
         st["subs"][s["subscription_id"]] = snap(s)
         if ev:
             kind, text = ev
+            text += src_text((src or {}).get(str(s.get("user_id"))))
             st["count"][kind] = st["count"].get(kind, 0) + 1
             c = st["count"]
             send(f"{text}\n\nОбщо за деня: {c.get('paid', 0) + c.get('conv', 0)} покупки · {c.get('trial', 0)} триала")
