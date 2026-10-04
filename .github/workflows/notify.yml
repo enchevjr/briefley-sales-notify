@@ -8,6 +8,7 @@ concurrency:
   cancel-in-progress: false
 permissions:
   contents: write
+  actions: write
 jobs:
   run:
     runs-on: ubuntu-latest
@@ -34,6 +35,12 @@ jobs:
         with:
           path: state.json
           key: notify-state-${{ github.run_id }}
+      # сам пуска следващото пускане (графикът на GitHub е ненадежден); cron остава като резерва
+      - name: next run
+        if: always() && github.event_name != 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run notify.yml -R ${{ github.repository }} || true
       # GitHub спира графика на публични хранилища след 60 дни без промени; веднъж месечно празен commit
       - name: keepalive
         run: |

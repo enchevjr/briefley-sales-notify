@@ -102,6 +102,7 @@ def sources(since):
         print("source:", e); return out
 
 def send(text):
+    print("→ Telegram:", text.splitlines()[0])
     if DRY: print("—", text); return
     r = requests.post(f"https://api.telegram.org/bot{E['TELEGRAM_BOT_TOKEN']}/sendMessage",
                       json={"chat_id": E["TELEGRAM_CHAT_ID"], "text": text}, timeout=30)
