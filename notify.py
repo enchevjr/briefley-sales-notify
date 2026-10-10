@@ -50,6 +50,11 @@ def money(s):
     cur = {"EUR": "€", "GBP": "£", "USD": "$", "BGN": "лв."}.get(s.get("currency"), s.get("currency") or "")
     return f" · {s['price']:.2f}".replace(".", ",") + f" {cur}".rstrip()
 
+def gmoney(s):
+    """Google пази цената от първото плащане (напр. 1,19 € за промо месеца на годишния): такава цена не е реалната сума."""
+    if s.get("store") == "google" and (s.get("price") or 0) < 3: return " · сумата: виж Play Console"
+    return money(s)
+
 def plat(s): return f"({STORE.get(s['store'], s['store'])})"
 
 def label(s):
@@ -68,7 +73,7 @@ def events(s, old, now):
             return "paid", f"🟢 Нова покупка {plat(s)} · {label(s)}{money(s)}"
         return None
     if s["refunded_at"] and not old["r"]:
-        return "refund", f"🔴 Възстановена сума {plat(s)} · {label(s)}{money(s)}"
+        return "refund", f"🔴 Възстановена сума {plat(s)} · {label(s)}{gmoney(s)}"
     if old["t"] and not s["is_trial"] and s["status"] in ("active", "grace"):
         return "conv", f"🟢 Триалът стана платен {plat(s)} · {label(s)}{money(s)}"
     return None
@@ -92,6 +97,7 @@ def renewals(st, now):
         amt = e.get("amount")
         cur_ = {"EUR": "€", "GBP": "£", "USD": "$", "BGN": "лв."}.get(e.get("currency"), e.get("currency") or "")
         m = (f" · {amt:.2f}".replace(".", ",") + f" {cur_}".rstrip()) if amt else ""
+        if e.get("store") == "google" and amt and amt < 3: m = ""          # промо цената от първия месец, не реалното плащане
         out.append((e, f"🔁 Подновен {PLAN.get(e.get('plan'), e.get('plan') or '')} абонамент {plat(e)}{m}"))
     st["ev_sent"] = list(sent)[-3000:]; st["ev_since"] = now.strftime("%Y-%m-%dT%H:%M:%SZ")
     return out
