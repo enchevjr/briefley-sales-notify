@@ -1,4 +1,4 @@
-"""Telegram известия за нови пробни периоди, покупки, преминали от пробен в платен и възстановени суми.
+"""Telegram известия за нови пробни периоди, покупки, преминали от пробен в платен, подновявания и възстановени суми.
 
 Сравнява абонаментите от Briefley Analytics API със снимката от предната проверка (state.json).
 Първото пускане само прави снимката и не праща нищо. Ключовете идват от env (GitHub) или от config.env.
@@ -73,6 +73,29 @@ def events(s, old, now):
         return "conv", f"🟢 Триалът стана платен {plat(s)} · {label(s)}{money(s)}"
     return None
 
+def renewals(st, now):
+    """Подновявания от /events (събитие renewed = реалното плащане в магазина). Първото пускане само запомня докъде е стигнало."""
+    since = st.get("ev_since")
+    if not since:
+        st["ev_since"] = now.strftime("%Y-%m-%dT%H:%M:%SZ"); st["ev_sent"] = []; return []
+    q, cur, rows = {"since": (ts(since) - dt.timedelta(minutes=10)).strftime("%Y-%m-%dT%H:%M:%SZ")}, None, []
+    while True:
+        p = dict(q, limit=1000)
+        if cur: p["cursor"] = cur
+        j = get("events", **p); rows += j["data"]; cur = j.get("next_cursor")
+        if not cur: break
+    sent, out = set(st.get("ev_sent", [])), []
+    for e in sorted(rows, key=lambda e: e["occurred_at"] or ""):
+        if e["event"] != "renewed" or e.get("is_deleted") or e["event_id"] in sent: continue
+        if now - ts(e["occurred_at"]) > dt.timedelta(days=3): continue          # стар запис, дошъл със закъснение
+        sent.add(e["event_id"])
+        amt = e.get("amount")
+        cur_ = {"EUR": "€", "GBP": "£", "USD": "$", "BGN": "лв."}.get(e.get("currency"), e.get("currency") or "")
+        m = (f" · {amt:.2f}".replace(".", ",") + f" {cur_}".rstrip()) if amt else ""
+        out.append((e, f"🔁 Подновен {PLAN.get(e.get('plan'), e.get('plan') or '')} абонамент {plat(e)}{m}"))
+    st["ev_sent"] = list(sent)[-3000:]; st["ev_since"] = now.strftime("%Y-%m-%dT%H:%M:%SZ")
+    return out
+
 def src_text(src):
     """Откъде е дошъл човекът (users.source от бекенда), когато е известно."""
     if not src: return ""
@@ -131,7 +154,12 @@ def main():
             text += src_text((src or {}).get(str(s.get("user_id"))))
             st["count"][kind] = st["count"].get(kind, 0) + 1
             c = st["count"]
-            send(f"{text}\n\nОбщо за деня: {c.get('paid', 0) + c.get('conv', 0)} покупки · {c.get('trial', 0)} триала")
+            send(f"{text}\n\nОбщо за деня: {c.get('paid', 0) + c.get('conv', 0)} покупки · {c.get('renew', 0)} подновявания · {c.get('trial', 0)} триала")
+    try:
+        for e, text in renewals(st, now):
+            st["count"]["renew"] = st["count"].get("renew", 0) + 1; c = st["count"]
+            send(f"{text}\n\nОбщо за деня: {c.get('paid', 0) + c.get('conv', 0)} покупки · {c['renew']} подновявания · {c.get('trial', 0)} триала")
+    except Exception as e: print("подновявания:", e)
     st["since"] = server
     if not DRY: json.dump(st, open(STATE, "w"))
     print(f"Проверени {len(rows)} променени абонамента.")
