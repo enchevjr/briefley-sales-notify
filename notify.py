@@ -43,7 +43,11 @@ def subs(**p):
 
 def ts(s): return dt.datetime.fromisoformat(s.replace("Z", "+00:00")) if s else None
 
-def snap(s): return {"t": s["is_trial"], "st": s["status"], "r": bool(s["refunded_at"])}
+def snap(s, old=None):
+    # след пробния, ако картата не мине (grace / billing_retry), още НЕ е платено: пазим го като пробен, докато плащането мине
+    fresh = s.get("offer") == "free_trial" and ts(s["started_at"]) and dt.datetime.now(dt.timezone.utc) - ts(s["started_at"]) < dt.timedelta(days=40)
+    unpaid = s["status"] in ("grace", "billing_retry") and (s["is_trial"] or (old or {}).get("t") or fresh)
+    return {"t": bool(s["is_trial"] or unpaid), "st": s["status"], "r": bool(s["refunded_at"])}
 
 def money(s):
     if s.get("price") is None: return ""
@@ -69,12 +73,12 @@ def events(s, old, now):
             return None
         if s["is_trial"] or s["status"] == "trial":
             return "trial", f"🔵 Нов стартиран триал {plat(s)} · {label(s)}"
-        if s["status"] in ("active", "grace"):
+        if s["status"] == "active":
             return "paid", f"🟢 Нова покупка {plat(s)} · {label(s)}{money(s)}"
         return None
     if s["refunded_at"] and not old["r"]:
         return "refund", f"🔴 Възстановена сума {plat(s)} · {label(s)}{gmoney(s)}"
-    if old["t"] and not s["is_trial"] and s["status"] in ("active", "grace"):
+    if old["t"] and not s["is_trial"] and s["status"] == "active":
         return "conv", f"🟢 Триалът стана платен {plat(s)} · {label(s)}{money(s)}"
     return None
 
@@ -154,7 +158,7 @@ def main():
         ev = events(s, st["subs"].get(s["subscription_id"]), now)
         if ev and src is None:
             src = sources((now - dt.timedelta(days=3)).strftime("%Y-%m-%dT%H:%M:%SZ"))
-        st["subs"][s["subscription_id"]] = snap(s)
+        st["subs"][s["subscription_id"]] = snap(s, st["subs"].get(s["subscription_id"]))
         if ev:
             kind, text = ev
             text += src_text((src or {}).get(str(s.get("user_id"))))
