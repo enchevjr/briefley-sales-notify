@@ -95,7 +95,7 @@ def renewals(st, now):
         if not cur: break
     sent, out = set(st.get("ev_sent", [])), []
     for e in sorted(rows, key=lambda e: e["occurred_at"] or ""):
-        if e["event"] != "renewed" or e.get("is_deleted") or e["event_id"] in sent: continue
+        if e["event"] != "renewed" or e.get("is_deleted") or e.get("backfilled") or e["event_id"] in sent: continue   # възстановените стари плащания не се пращат
         if now - ts(e["occurred_at"]) > dt.timedelta(days=3): continue          # стар запис, дошъл със закъснение
         sent.add(e["event_id"])
         amt = e.get("amount")
