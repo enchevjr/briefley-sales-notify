@@ -106,6 +106,39 @@ def renewals(st, now):
     st["ev_sent"] = list(sent)[-3000:]; st["ev_since"] = now.strftime("%Y-%m-%dT%H:%M:%SZ")
     return out
 
+def day_counts(now):
+    """„Общо за деня“ от реалните събития в API-то (днешна дата по София), а не от натрупан брояч.
+    Така повторно пускане / стара снимка не може да надуе числата. None при грешка."""
+    try:
+        mid = now.astimezone(SOFIA).replace(hour=0, minute=0, second=0, microsecond=0).astimezone(dt.timezone.utc)
+        q, cur, rows = {"since": (mid - dt.timedelta(days=1)).strftime("%Y-%m-%dT%H:%M:%SZ")}, None, []
+        while True:
+            p = dict(q, limit=1000)
+            if cur: p["cursor"] = cur
+            j = get("events", **p); rows += j["data"]; cur = j.get("next_cursor")
+            if not cur: break
+        c, seen = {}, set()
+        for e in rows:
+            if e.get("is_deleted") or e.get("backfilled") or e["event_id"] in seen or not e.get("occurred_at"): continue
+            if ts(e["occurred_at"]) < mid: continue
+            seen.add(e["event_id"])
+            k = {"trial_started": "trial", "subscribed": "paid", "converted": "conv", "renewed": "renew"}.get(e["event"])
+            if not k: continue
+            u = (k, e.get("order_id") if k == "renew" else e.get("subscription_id")) if e.get("subscription_id") else (k, e["event_id"])
+            if u in seen: continue                                   # уникални: един trial / покупка на абонамент
+            seen.add(u); c[k] = c.get(k, 0) + 1
+        return c
+    except Exception as ex:
+        print("брояч от API:", ex); return None
+
+def total(c): return f"\n\nОбщо за деня: {c.get('paid', 0) + c.get('conv', 0)} покупки · {c.get('renew', 0)} подновявания · {c.get('trial', 0)} триала"
+
+def save(st):
+    """Записва снимката веднага (атомарно), за да не се прати същото пак, ако следващо пращане гръмне."""
+    if DRY: return
+    tmp = STATE + ".tmp"
+    json.dump(st, open(tmp, "w")); os.replace(tmp, STATE)
+
 def src_text(src):
     """Откъде е дошъл човекът (users.source от бекенда), когато е известно."""
     if not src: return ""
@@ -153,25 +186,57 @@ def main():
     now = ts(server) or dt.datetime.now(dt.timezone.utc)
     today = now.astimezone(SOFIA).date().isoformat()
     if st.get("day") != today: st["day"], st["count"] = today, {}
-    src = None
+    src, api_c = None, None
+    nows = now.strftime("%Y-%m-%dT%H:%M:%SZ")
+    if "sent" not in st:
+        # първо пускане с дедупликацията: засяваме всичко, започнало в последните 2 дни, за да не тръгне вълна от повторни известия
+        recent, _ = subs(updated_since=(now - dt.timedelta(days=3)).strftime("%Y-%m-%dT%H:%M:%SZ"))
+        st["sent"] = {}
+        for s in recent:
+            if ts(s["started_at"]) and now - ts(s["started_at"]) < dt.timedelta(days=2):
+                for k in ("trial", "paid"): st["sent"][f"{k}:{s['subscription_id']}"] = nows
+            if s["status"] == "active" and not s["is_trial"]: st["sent"][f"conv:{s['subscription_id']}"] = nows
+            if s["refunded_at"]: st["sent"][f"refund:{s['subscription_id']}"] = nows
+        print(f"Засети {len(st['sent'])} пратени ключа (без съобщения).")
+    sent = st["sent"]                         # „вид:subscription_id“ → кога е пратено; никога два пъти, пази се 7 дни
+    for k in [k for k, v in sent.items() if now - ts(v) > dt.timedelta(days=7)]: del sent[k]
+    fails = st.setdefault("fails", {}); retry = False
     for s in sorted(rows, key=lambda s: s["updated_at"] or ""):
         ev = events(s, st["subs"].get(s["subscription_id"]), now)
-        if ev and src is None:
+        if not ev:
+            st["subs"][s["subscription_id"]] = snap(s, st["subs"].get(s["subscription_id"])); continue
+        kind, text = ev
+        key = f"{kind}:{s['subscription_id']}"
+        if key in sent:
+            print("вече пратено:", key)
+            st["subs"][s["subscription_id"]] = snap(s, st["subs"].get(s["subscription_id"])); continue
+        if src is None:
             src = sources((now - dt.timedelta(days=3)).strftime("%Y-%m-%dT%H:%M:%SZ"))
+        text += src_text((src or {}).get(str(s.get("user_id"))))
+        if api_c is None: api_c = day_counts(now)
+        c = dict(api_c) if api_c is not None else dict(st["count"], **{kind: st["count"].get(kind, 0) + 1})
+        try:
+            send(text + total(c))
+        except Exception as ex:
+            fails[key] = fails.get(key, 0) + 1
+            print(f"Telegram грешка ({fails[key]}/3) {key}:", ex)
+            if fails[key] < 3:                # снимката на този абонамент и since не се местят → следващата минута пак, най-много 3 пъти
+                retry = True; save(st); continue
+        fails.pop(key, None)
         st["subs"][s["subscription_id"]] = snap(s, st["subs"].get(s["subscription_id"]))
-        if ev:
-            kind, text = ev
-            text += src_text((src or {}).get(str(s.get("user_id"))))
-            st["count"][kind] = st["count"].get(kind, 0) + 1
-            c = st["count"]
-            send(f"{text}\n\nОбщо за деня: {c.get('paid', 0) + c.get('conv', 0)} покупки · {c.get('renew', 0)} подновявания · {c.get('trial', 0)} триала")
+        st["count"][kind] = st["count"].get(kind, 0) + 1
+        sent[key] = nows
+        save(st)
     try:
         for e, text in renewals(st, now):
-            st["count"]["renew"] = st["count"].get("renew", 0) + 1; c = st["count"]
-            send(f"{text}\n\nОбщо за деня: {c.get('paid', 0) + c.get('conv', 0)} покупки · {c['renew']} подновявания · {c.get('trial', 0)} триала")
+            st["count"]["renew"] = st["count"].get("renew", 0) + 1
+            if api_c is None: api_c = day_counts(now)
+            try: send(text + total(api_c if api_c is not None else st["count"]))
+            except Exception as ex: print("Telegram грешка (подновяване):", ex)
+            save(st)
     except Exception as e: print("подновявания:", e)
-    st["since"] = server
-    if not DRY: json.dump(st, open(STATE, "w"))
+    if not retry: st["since"] = server
+    save(st)
     print(f"Проверени {len(rows)} променени абонамента.")
 
 if __name__ == "__main__":
