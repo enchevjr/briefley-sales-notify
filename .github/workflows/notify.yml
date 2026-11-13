@@ -33,6 +33,7 @@ jobs:
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           NOTIFY_STATE: state.json
           TELEGRAM_KG_BOT_TOKEN: ${{ secrets.TELEGRAM_KG_BOT_TOKEN }}
+          TELEGRAM_KG_CHAT_ID: ${{ secrets.TELEGRAM_KG_CHAT_ID }}
           KG_STATE: kg_state.json
       - uses: actions/cache/save@v4
         if: always() && hashFiles('state.json') != ''
