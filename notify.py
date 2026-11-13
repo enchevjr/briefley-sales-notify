@@ -246,5 +246,8 @@ if __name__ == "__main__":
     while True:
         try: main()
         except Exception as e: print("грешка:", e)
+        try:
+            import kg; kg.main()              # бот „Briefley Градини“: заявки за демо + напомняния
+        except Exception as e: print("kg грешка:", type(e).__name__)
         if time.time() + 60 > end: break
         time.sleep(60)

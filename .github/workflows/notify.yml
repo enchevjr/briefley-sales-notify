@@ -21,7 +21,9 @@ jobs:
       - run: pip install -q requests
       - uses: actions/cache/restore@v4
         with:
-          path: state.json
+          path: |
+            state.json
+            kg_state.json
           key: notify-state-${{ github.run_id }}
           restore-keys: notify-state-
       - run: python notify.py --loop 115
@@ -30,10 +32,14 @@ jobs:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           NOTIFY_STATE: state.json
+          TELEGRAM_KG_BOT_TOKEN: ${{ secrets.TELEGRAM_KG_BOT_TOKEN }}
+          KG_STATE: kg_state.json
       - uses: actions/cache/save@v4
         if: always() && hashFiles('state.json') != ''
         with:
-          path: state.json
+          path: |
+            state.json
+            kg_state.json
           key: notify-state-${{ github.run_id }}
       # сам пуска следващото пускане (графикът на GitHub е ненадежден); cron остава като резерва
       - name: next run
