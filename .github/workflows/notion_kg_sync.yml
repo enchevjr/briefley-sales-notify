@@ -1,0 +1,24 @@
+name: notion-kg-sync
+on:
+  schedule:
+    - cron: "*/30 * * * *"
+  workflow_dispatch:
+concurrency:
+  group: notion-kg-sync
+  cancel-in-progress: false
+permissions:
+  contents: read
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -q requests
+      - run: python notion_kg_sync.py
+        env:
+          BRIEFLEY_ANALYTICS_KEY: ${{ secrets.BRIEFLEY_ANALYTICS_KEY }}
+          NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
