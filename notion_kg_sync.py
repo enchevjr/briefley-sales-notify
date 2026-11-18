@@ -1,10 +1,13 @@
 """Нови заявки за демо от детски градини → Notion („Градини – срещи и демо“).
 
-Чете GET /kindergarten-bookings (Briefley Analytics API) и за всяко записване, чието id го няма
-в базата „Градини“ (свойство „ID записване“), създава:
+Чете GET /kindergarten-bookings (Briefley Analytics API) и за всяко записване с id, ПО-ГОЛЯМО от
+най-голямото „ID записване“ в базата „Градини“, създава:
   - страница в „Градини“;
   - два реда в „Разговори“, свързани с градината: „Записване от сайта“ и „Демо разговор“.
-Съществуващи страници НИКОГА не се обновяват (бележките на Ясен остават непокътнати).
+Съществуващи страници НИКОГА не се обновяват (бележките на Ясен остават непокътнати), а изтрити
+от Ясен стари заявки НЕ се връщат (сравнява се с най-голямото id, не с „липсващите“).
+Имената на свойствата се четат от базата при всяко пускане: ако Ясен преименува/изтрие колона,
+скриптът пропуска липсващите, вместо да спре (познава и старите имена – виж ALIASES).
 Telegram известията (kg.py) не зависят от този скрипт.
 
 Репото е публично: в логовете само броеве и id-та – никакви имена, телефони, имейли.
@@ -14,13 +17,18 @@ Telegram известията (kg.py) не зависят от този скри
   --dry-run          нищо не създава; показва само кои id-та са нови.
                      Без NOTION_TOKEN сравнява с --known-ids (напр. --known-ids 20-31,34-40).
 """
-import datetime as dt, os, sys, time
+import datetime as dt, json, os, sys, time
 from zoneinfo import ZoneInfo
 import requests
 
 DRY = "--dry-run" in sys.argv
 SOFIA = ZoneInfo("Europe/Sofia")
 SKIP_IDS = {32, 33}                                   # тестови записвания на Ясен
+MIN_ID = 41                                           # всичко до 41 вкл. е внесено ръчно на 18.11
+# последното внесено id (кеш в GitHub Actions) – за да не се върне заявка, която Ясен е изтрил
+STATE = os.environ.get("NOTION_STATE", os.path.join(os.path.dirname(os.path.abspath(__file__)), "notion_state.json"))
+# свойство в кода → възможни имена в Notion (първото съществуващо се ползва)
+ALIASES = {"Записано на": ["Записано на", "Записал се на"], "Кога": ["Кога", "Среща на"]}
 
 E = dict(os.environ)
 cfg = os.path.expanduser("~/.kidsapp/keys/config.env")
@@ -64,6 +72,21 @@ def bookings():
         j = req("GET", f"{API}/kindergarten-bookings", H_API, params=p)
         out += j.get("data", []); cur = j.get("next_cursor")
         if not cur: return out
+
+
+def schema(db):
+    j = req("GET", f"{NOTION}/databases/{db}", H_N)
+    return {k: v.get("type") for k, v in j.get("properties", {}).items()}
+
+
+def fit(props, sch):
+    """Само свойствата, които ги има в базата (с преименуванията от ALIASES)."""
+    out = {}
+    for k, v in props.items():
+        for name in ALIASES.get(k, [k]):
+            if name in sch:
+                out[name] = v; break
+    return out
 
 
 def notion_ids():
@@ -139,23 +162,32 @@ def main():
         print(f"notion: без NOTION_TOKEN – сравнявам с --known-ids ({len(known)} id-та)")
     else:
         print("notion: няма NOTION_TOKEN – пропускам"); return
-    new = sorted((b for b in rows if b["id"] not in known), key=lambda b: b["id"])
-    print(f"notion: заявки в API {len(rows)}, вече в Notion {len(known)}, нови {len(new)}: {[b['id'] for b in new]}")
-    if DRY: return
+    try:
+        last = int(json.load(open(STATE)).get("last_id", 0))
+    except Exception:
+        last = 0
+    floor = max(known | {MIN_ID, last})
+    new = sorted((b for b in rows if b["id"] > floor and b["id"] not in known), key=lambda b: b["id"])
+    print(f"notion: заявки в API {len(rows)}, в Notion {len(known)} (до id {floor}), нови {len(new)}: {[b['id'] for b in new]}")
+    if DRY or not new: return
+    sch_kg, sch_talks = schema(DB_KG), schema(DB_TALKS)
     made = 0
     for b in new:
         try:
-            pg = req("POST", f"{NOTION}/pages", H_N, json={"parent": {"database_id": DB_KG}, "properties": kg_props(b)})
+            pg = req("POST", f"{NOTION}/pages", H_N, json={"parent": {"database_id": DB_KG}, "properties": fit(kg_props(b), sch_kg)})
         except Exception as ex:
             print(f"notion: грешка при градина id={b['id']}:", ex); continue
         pending = b.get("status") == "pending"
         for t in (talk("Записване от сайта", "Записване от сайта", b.get("created_at"), pg["id"]),
                   talk("Демо разговор", "Демо", meeting_local(b), pg["id"], "Предстои" if pending else None)):
             try:
+                t["properties"] = fit(t["properties"], sch_talks)
                 req("POST", f"{NOTION}/pages", H_N, json=t)
             except Exception as ex:
                 print(f"notion: грешка при разговор за id={b['id']}:", ex)
         made += 1; print(f"notion: внесено id={b['id']}")
+        last = max(last, b["id"])
+        tmp = STATE + ".tmp"; json.dump({"last_id": last}, open(tmp, "w")); os.replace(tmp, STATE)
     print(f"notion: внесени {made} от {len(new)}")
 
 

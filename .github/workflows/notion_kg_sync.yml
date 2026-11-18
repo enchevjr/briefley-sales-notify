@@ -22,10 +22,21 @@ jobs:
         with:
           python-version: "3.12"
       - run: pip install -q requests
+      - uses: actions/cache/restore@v4
+        with:
+          path: notion_state.json
+          key: notion-state-${{ github.run_id }}
+          restore-keys: notion-state-
       - run: python notion_kg_sync.py --loop 115
         env:
           BRIEFLEY_ANALYTICS_KEY: ${{ secrets.BRIEFLEY_ANALYTICS_KEY }}
           NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
+          NOTION_STATE: notion_state.json
+      - uses: actions/cache/save@v4
+        if: always() && hashFiles('notion_state.json') != ''
+        with:
+          path: notion_state.json
+          key: notion-state-${{ github.run_id }}
       - name: next run
         if: always()
         env:

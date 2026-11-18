@@ -1,3 +1,4 @@
 state.json
 __pycache__/
 set_secrets.sh
+notion_state.json
