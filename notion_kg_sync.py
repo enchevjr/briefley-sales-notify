@@ -9,6 +9,8 @@ Telegram известията (kg.py) не зависят от този скри
 
 Репото е публично: в логовете само броеве и id-та – никакви имена, телефони, имейли.
 
+  --loop N           повтаря проверката всяка минута N минути (като notify.py) – новите
+                     заявки влизат в Notion до ~1 мин след известието в Telegram.
   --dry-run          нищо не създава; показва само кои id-та са нови.
                      Без NOTION_TOKEN сравнява с --known-ids (напр. --known-ids 20-31,34-40).
 """
@@ -158,4 +160,12 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    mins = int(sys.argv[sys.argv.index("--loop") + 1]) if "--loop" in sys.argv else 0
+    end = time.time() + mins * 60
+    while True:
+        try:
+            main()
+        except Exception as ex:                        # само вида на грешката – без данни
+            print("notion: грешка:", type(ex).__name__, str(ex)[:120] if isinstance(ex, RuntimeError) else "")
+        if time.time() + 60 > end: break
+        time.sleep(60)

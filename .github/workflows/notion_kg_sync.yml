@@ -1,4 +1,7 @@
 name: notion-kg-sync
+# Нови заявки от градини → Notion. Проверява всяка минута ~115 мин (като notify.yml) и сам пуска
+# следващото пускане, така че заявката влиза в Notion до ~1 мин след известието в Telegram.
+# cron остава като резерва; concurrency не позволява две пускания едновременно (без дубликати).
 on:
   schedule:
     - cron: "*/30 * * * *"
@@ -8,17 +11,23 @@ concurrency:
   cancel-in-progress: false
 permissions:
   contents: read
+  actions: write
 jobs:
   sync:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 125
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
       - run: pip install -q requests
-      - run: python notion_kg_sync.py
+      - run: python notion_kg_sync.py --loop 115
         env:
           BRIEFLEY_ANALYTICS_KEY: ${{ secrets.BRIEFLEY_ANALYTICS_KEY }}
           NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
+      - name: next run
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run notion_kg_sync.yml -R ${{ github.repository }} || true
